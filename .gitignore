@@ -1,0 +1,8 @@
+# Serverless directories
+.serverless/*
+node_modules
+
+package*.json
+
+# MacOS files
+.DS_Store

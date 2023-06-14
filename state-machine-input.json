@@ -1,0 +1,4 @@
+{
+    "waitSeconds": 10,
+    "Message": "Testing Step Function - Task Timer (Lambda, Amazon SNS)"
+}

@@ -1,0 +1,141 @@
+  # TemplateName: serverless.yaml
+  # TemplateType: SNS Topic with email subscription and a step function
+  # Version: 1.0.0
+  # Owner: Subhamay Bhattacharyya
+  # ProjectName: Tarius
+  # Modification History:
+  #   - 1.0.0  - Jun 14, 2023   -- Initial Version
+  # Resources: 
+  #   - One SNS Topic with KMS Encryption and Email Subscription.
+  #   - One Step Function with associated IAM execution role.
+
+service: daylily
+# app: 0086-daylily-sls
+# org: subhamayaws
+
+frameworkVersion: "^3.25.1"
+
+params:
+  devl: 
+    kms-key-alias: alias/SB-KMS
+    kms-key-id: arn:aws:kms:us-east-1:807724355529:key/e4c733c5-9fbe-4a90-bda1-6f0362bc9b89
+    sns-subscription-email: subhamay.aws@mailinator.com
+
+provider:
+  name: aws
+  stackName: daylily-sls-stack
+  deploymentBucket:
+    name: subhamay-serverless-deploy-us-east-1
+    serverSideEncryption: AES256
+  stage: devl
+  region: us-east-1
+
+custom:
+  sf-iam-role: ${self:service}-sf-execution-role-sls
+  sf-execution-policy: ${self:service}-sf-execution-policy-sls
+  step-function-name: ${self:service}-step-function-sls-${self:provider.stage}-${self:provider.region}
+  sns-topic-name: ${self:service}-sns-topic-${self:provider.stage}-${self:provider.region}
+
+plugins:
+  - serverless-step-functions
+resources:
+  Description: Daylily - Serverless stack to create a SNS Topic with subscription and a Step Function
+
+  Resources:
+    #################################### SNS Topic #################################################
+    DaylilySNSTopic:
+      Type: AWS::SNS::Topic
+      Properties: 
+        DisplayName: "SNS Topic Name for Task Timer Step Function"
+        TopicName: ${self:custom.sns-topic-name}
+        KmsMasterKeyId: ${param:kms-key-alias}
+        Tags: 
+          - Key: Project
+            Value: ${self:service}
+          - Key: Environment
+            Value: ${self:provider.stage}
+    #################################### SNS Subscription ##########################################
+    DaylilySNSSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: email
+        Endpoint: ${param:sns-subscription-email}
+        TopicArn: !Ref DaylilySNSTopic
+    #################################### State Machine Execution Role ##############################
+    DaylilyStepFunctionExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.sf-iam-role}
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+        Path: /
+        Policies:
+          - PolicyName: ${self:custom.sf-execution-policy}
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+              - Sid: AllowSNSPublish
+                Effect: Allow
+                Action:
+                - sns:Publish
+                Resource: !Ref DaylilySNSTopic
+              - Sid: AllowKMSEncryptDecrypt
+                Effect: Allow
+                Action: 
+                - kms:Decrypt
+                - kms:Encrypt
+                - kms:GenerateDataKey
+                - kms:GenerateDataKeyPair
+                Resource: "*"
+        Tags:
+          - Key: Project
+            Value: ${self:service}
+          - Key: Environment
+            Value: ${self:provider.stage}
+  Outputs:
+    DaylilySNSTopicArn:
+      Description: Arn of the SNS Topic
+      Value: !Ref DaylilySNSTopic
+    DaylilySNSSubscriptionArn:
+      Description: Arn of the SNS Subscription Email
+      Value: !Ref DaylilySNSSubscription
+    DaylilyStepFunctionExecutionRoleArn:
+      Description: Arn of the Step Function Execution Role
+      Value: !GetAtt DaylilyStepFunctionExecutionRole.Arn
+    DaylilyStepFunctionArn: 
+      Description: Arn of the Daylily Step Function
+      Value: !Sub "arn:${AWS::Partition}:states:${AWS::Partition}:${AWS::AccountId}:stateMachine:${self:custom.step-function-name}"
+
+stepFunctions:
+  stateMachines:
+    DaylilyStateMachine:
+      name: ${self:custom.step-function-name}
+      role: !GetAtt DaylilyStepFunctionExecutionRole.Arn
+      definition:
+        Comment: "An example of the Task Timer (Lambda, Amazon SNS) Step Function"
+        TimeoutSeconds: 3600
+        StartAt: Wait for Timestamp
+        States:
+          Wait for Timestamp:
+            Type: Wait
+            Next: Send SNS Message
+            InputPath: "$"
+            SecondsPath: "$.waitSeconds"
+            OutputPath: "$.Message"
+          Send SNS Message:
+            Type: Task
+            Resource: "arn:aws:states:::sns:publish"
+            Parameters:
+              Message: 
+                Message.$: "$"
+              TopicArn: !Ref DaylilySNSTopic
+            End: true
+      dependsOn: DaylilyStepFunctionExecutionRole
+      tags:
+        ProjectName: ${self:service}
+        Environment: ${self:provider.stage}
